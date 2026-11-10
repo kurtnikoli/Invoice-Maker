@@ -1,0 +1,950 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Video Invoice Desk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Krona+One&display=swap" rel="stylesheet">
+<script defer src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<style>
+/* Layout idea: the form sits left, the finished invoice sits right as a white sheet. Each video line is a colored clip on a timeline strip across the sheet. */
+:root {
+  --ground: #e6eaf3;
+  --panel: #ffffff;
+  --ink: #141b34;
+  --muted: #566082;
+  --line: #cbd2e2;
+  --accent: #2b3fd6;
+  --on-accent: #ffffff;
+  --good: #0b7a5b;
+  --good-soft: #d7f2e8;
+  --warn: #9a5b00;
+  --warn-soft: #fdeccd;
+  --bad: #b3213f;
+  --display: "Krona One", "IBM Plex Sans", Arial, sans-serif;
+  --body: "IBM Plex Sans", Arial, sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #11152a; --panel: #1a2040; --ink: #e8ecf8; --muted: #a3acc9; --line: #343c5f;
+    --accent: #93a1ff; --on-accent: #10142b; --good: #5fd6b0; --good-soft: #17392f;
+    --warn: #f2bd6b; --warn-soft: #3d2d12; --bad: #ff8fa6;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #11152a; --panel: #1a2040; --ink: #e8ecf8; --muted: #a3acc9; --line: #343c5f;
+  --accent: #93a1ff; --on-accent: #10142b; --good: #5fd6b0; --good-soft: #17392f;
+  --warn: #f2bd6b; --warn-soft: #3d2d12; --bad: #ff8fa6;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--ground); color: var(--ink); font: 400 15px/1.45 var(--body); }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[hidden] { display: none !important; }
+
+.top { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 14px clamp(16px, 3vw, 32px); }
+.top h1 { font: 400 17px/1.2 var(--display); margin: 0; letter-spacing: -.01em; }
+.tabs { display: flex; gap: 4px; }
+.tab { border: 0; background: transparent; padding: 8px 14px; border-radius: 6px; font-weight: 500; color: var(--muted); }
+.tab[aria-selected="true"] { background: var(--panel); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line); }
+
+.desk { display: grid; grid-template-columns: minmax(340px, 440px) minmax(0, 1fr); gap: 24px; align-items: start; padding: 0 clamp(16px, 3vw, 32px) 40px; }
+.form { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+.notice { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 20px; background: var(--warn-soft); color: var(--warn); border-radius: 10px 10px 0 0; font-weight: 500; font-size: 14px; }
+.notice button { flex: none; background: transparent; border: 1px solid currentColor; color: inherit; border-radius: 6px; padding: 4px 10px; font-size: 13px; font-weight: 600; }
+.group { padding: 18px 20px 20px; display: grid; gap: 12px; }
+.group + .group { border-top: 1px solid var(--line); }
+.group h2 { font-size: 15px; font-weight: 600; margin: 0; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.field { display: grid; gap: 4px; min-width: 0; }
+.field label, .mini { font-size: 13px; font-weight: 500; color: var(--muted); }
+input, select, textarea { width: 100%; min-width: 0; background: transparent; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+select option { color: #141b34; background: #fff; }
+textarea { resize: vertical; min-height: 68px; }
+input[type="number"] { font-variant-numeric: tabular-nums; }
+
+.line { display: grid; grid-template-columns: 5px minmax(0, 1fr); gap: 0 10px; }
+.line .bar { border-radius: 3px; }
+.line .inner { display: grid; gap: 8px; }
+.line .nums { display: grid; grid-template-columns: 76px minmax(0, 1fr) minmax(92px, auto) 30px; gap: 8px; align-items: end; }
+.line .amt { text-align: right; font-weight: 600; padding-bottom: 8px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.icon { width: 30px; height: 37px; border: 0; background: transparent; color: var(--muted); border-radius: 6px; font-size: 18px; line-height: 1; }
+.icon:hover { color: var(--bad); }
+#lines { display: grid; gap: 16px; }
+.ghost { justify-self: start; background: transparent; border: 1px dashed var(--line); border-radius: 6px; padding: 8px 14px; font-weight: 500; color: var(--accent); }
+
+.stage { position: sticky; top: 12px; display: grid; gap: 12px; min-width: 0; }
+.bar-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px 16px; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
+.due-mini { font-size: 13px; color: var(--muted); font-weight: 500; }
+.due-mini strong { display: block; font: 400 20px/1.25 var(--display); color: var(--ink); }
+.btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn { border: 1px solid var(--line); background: transparent; border-radius: 6px; padding: 9px 14px; font-weight: 600; white-space: nowrap; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn:disabled { opacity: .55; cursor: progress; }
+.error { color: var(--bad); font-weight: 500; font-size: 14px; flex-basis: 100%; }
+.scroller { max-height: calc(100vh - 118px); overflow: auto; border-radius: 4px; box-shadow: 0 0 0 1px var(--line); background: #fff; }
+.fit { width: 100%; overflow: hidden; }
+#sheetHost { width: 794px; transform-origin: top left; }
+
+/* The invoice itself keeps one palette in every theme so exports always match. */
+.sheet { --p-ink: #141b34; --p-mute: #5d6684; --p-rule: #d8dde9; --p-blue: #2b3fd6; position: relative; width: 794px; background: #fff; color: var(--p-ink); padding: 56px 56px 52px; font: 400 14px/1.5 var(--body); }
+.sheet h3 { margin: 0; font: 500 12.5px/1.4 var(--body); color: var(--p-mute); }
+.s-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; }
+.s-title { font: 400 50px/1 var(--display); letter-spacing: -.02em; }
+.s-meta { display: grid; grid-template-columns: auto auto; gap: 2px 18px; font-size: 13px; text-align: right; }
+.s-meta span { color: var(--p-mute); }
+.s-meta b { font-weight: 600; }
+.s-strip { display: flex; gap: 3px; height: 16px; margin: 26px 0 30px; }
+.s-strip i { display: block; border-radius: 3px; min-width: 6px; }
+.s-strip .empty { flex: 1; background: var(--p-rule); }
+.s-parties { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; margin-bottom: 30px; }
+.s-parties .big { font-weight: 600; font-size: 16px; line-height: 1.3; margin-top: 3px; overflow-wrap: anywhere; }
+.s-parties p { margin: 0; color: var(--p-mute); overflow-wrap: anywhere; }
+.s-table { width: 100%; border-collapse: collapse; }
+.s-table th { text-align: left; font: 500 12.5px/1.4 var(--body); color: var(--p-mute); padding: 0 0 8px; border-bottom: 2px solid var(--p-ink); }
+.s-table td { padding: 12px 0; border-bottom: 1px solid var(--p-rule); vertical-align: top; }
+.s-table .n { text-align: right; white-space: nowrap; padding-left: 18px; }
+.s-table td.name { font-weight: 500; padding-left: 20px; position: relative; overflow-wrap: anywhere; }
+.s-table td.name i { position: absolute; left: 0; top: 15px; width: 10px; height: 14px; border-radius: 2px; }
+.s-table td.none { color: var(--p-mute); }
+.s-table th.first { padding-left: 20px; }
+.s-table td.amount { font-weight: 600; }
+.s-bottom { display: grid; grid-template-columns: 1fr 318px; gap: 40px; margin-top: 26px; align-items: start; }
+.s-pay dl { margin: 8px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 5px 16px; }
+.s-pay dt { color: var(--p-mute); }
+.s-pay dd { margin: 0; font-weight: 500; overflow-wrap: anywhere; }
+.s-pay .method { font-weight: 600; font-size: 16px; margin-top: 3px; }
+.s-sum { display: grid; gap: 6px; }
+.s-sum .row { display: flex; justify-content: space-between; gap: 16px; }
+.s-sum .row span { color: var(--p-mute); }
+.s-sum .row b { font-weight: 600; }
+.s-due { background: var(--p-blue); color: #fff; border-radius: 6px; padding: 14px 18px 16px; margin-top: 8px; }
+.s-due small { display: block; font-size: 13px; font-weight: 500; }
+.s-due strong { display: block; font-family: var(--display); font-weight: 400; line-height: 1.25; margin-top: 2px; }
+.s-notes { margin-top: 26px; padding-top: 14px; border-top: 1px solid var(--p-rule); }
+.s-notes p { margin: 3px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.s-stamp { position: absolute; top: 66px; right: 262px; border: 3px solid #0b7a5b; color: #0b7a5b; border-radius: 6px; padding: 5px 16px 6px; font: 400 24px/1 var(--display); transform: rotate(-8deg); }
+
+#exportHost { position: fixed; left: -12000px; top: 0; width: 794px; }
+
+/* History */
+.history { padding: 0 clamp(16px, 3vw, 32px) 40px; display: grid; gap: 16px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.tile span { font-size: 13px; font-weight: 500; color: var(--muted); }
+.tile strong { display: block; font: 400 19px/1.35 var(--display); overflow-wrap: anywhere; }
+.tools { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.tools input { flex: 1 1 220px; max-width: 360px; background: var(--panel); }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--panel); }
+.seg button { border: 0; background: transparent; padding: 8px 14px; font-weight: 500; color: var(--muted); }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+.tools .btn { margin-left: auto; background: var(--panel); }
+.tablewrap { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; }
+.h-table { width: 100%; border-collapse: collapse; min-width: 880px; }
+.h-table th { text-align: left; font-size: 13px; font-weight: 500; color: var(--muted); padding: 11px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.h-table td { padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.h-table tr:last-child td { border-bottom: 0; }
+.h-table .r { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.h-table .no { font-weight: 600; white-space: nowrap; }
+.pill { border: 0; border-radius: 999px; padding: 3px 11px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.pill.unpaid { background: var(--warn-soft); color: var(--warn); }
+.pill.paid { background: var(--good-soft); color: var(--good); }
+.acts { display: flex; gap: 2px; justify-content: flex-end; white-space: nowrap; }
+.link { border: 0; background: transparent; padding: 5px 8px; border-radius: 5px; font-weight: 500; color: var(--accent); font-size: 14px; }
+.link:hover { text-decoration: underline; }
+.link.danger { color: var(--bad); }
+.empty-state { padding: 40px 20px; text-align: center; color: var(--muted); }
+.empty-state .btn { margin-top: 12px; color: var(--ink); }
+
+.toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); background: var(--ink); color: var(--ground); padding: 10px 16px; border-radius: 8px; font-weight: 500; max-width: calc(100vw - 32px); z-index: 10; }
+
+@media (max-width: 900px) {
+  .desk { grid-template-columns: minmax(0, 1fr); }
+  .stage { position: static; }
+  .scroller { max-height: none; }
+}
+@media (max-width: 400px) {
+  .line .nums { grid-template-columns: 64px minmax(0, 1fr) 30px; }
+  .line .amt { grid-column: 1 / -1; grid-row: 2; padding-bottom: 0; }
+  .grid2 { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .tab, .btn, .pill { transition: background-color .12s, border-color .12s; }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>Video Invoice Desk</h1>
+  <nav class="tabs" role="tablist" aria-label="Sections">
+    <button class="tab" id="tabNew" role="tab" aria-selected="true">New invoice</button>
+    <button class="tab" id="tabHistory" role="tab" aria-selected="false">History <span id="historyCount"></span></button>
+  </nav>
+</header>
+
+<main id="viewNew" class="desk">
+  <section class="form" aria-label="Invoice form">
+    <div class="notice" id="exampleNotice"><span>Example data. Replace it with your own.</span><button id="clearExample" type="button">Clear form</button></div>
+    <div class="notice" id="editNotice" hidden><span id="editText"></span><button id="stopEdit" type="button">Start new invoice</button></div>
+
+    <div class="group">
+      <h2>Invoice details</h2>
+      <div class="grid2">
+        <div class="field"><label for="f-number">Invoice number</label><input id="f-number" data-bind="number" autocomplete="off"></div>
+        <div class="field"><label for="f-currency">Currency</label>
+          <select id="f-currency" data-bind="currency"></select></div>
+        <div class="field"><label for="f-issued">Issue date</label><input id="f-issued" type="date" data-bind="issued"></div>
+        <div class="field"><label for="f-due">Due date</label><input id="f-due" type="date" data-bind="due"></div>
+        <div class="field"><label for="f-pstart">Work period start</label><input id="f-pstart" type="date" data-bind="periodStart"></div>
+        <div class="field"><label for="f-pend">Work period end</label><input id="f-pend" type="date" data-bind="periodEnd"></div>
+        <div class="field"><label for="f-status">Status</label>
+          <select id="f-status" data-bind="status"><option value="unpaid">Unpaid</option><option value="paid">Paid</option></select></div>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>From</h2>
+      <div class="grid2">
+        <div class="field"><label for="f-name">Name</label><input id="f-name" data-bind="from.name" list="pastNames" autocomplete="off"></div>
+        <div class="field"><label for="f-email">Email or Discord</label><input id="f-email" data-bind="from.contact" autocomplete="off"></div>
+      </div>
+      <datalist id="pastNames"></datalist>
+    </div>
+
+    <div class="group">
+      <h2>Bill to</h2>
+      <div class="grid2">
+        <div class="field"><label for="f-to">Client or company</label><input id="f-to" data-bind="to.name" list="pastClients" autocomplete="off"></div>
+        <div class="field"><label for="f-tocontact">Contact (optional)</label><input id="f-tocontact" data-bind="to.contact" autocomplete="off"></div>
+      </div>
+      <datalist id="pastClients"></datalist>
+    </div>
+
+    <div class="group">
+      <h2>Videos</h2>
+      <div id="lines"></div>
+      <button class="ghost" id="addLine" type="button">Add another video type</button>
+    </div>
+
+    <div class="group">
+      <h2>Adjustments</h2>
+      <div class="grid2">
+        <div class="field"><label for="f-bonus">Bonus (added)</label><input id="f-bonus" type="number" min="0" step="any" inputmode="decimal" data-bind="bonus"></div>
+        <div class="field"><label for="f-deduction">Deductions (subtracted)</label><input id="f-deduction" type="number" min="0" step="any" inputmode="decimal" data-bind="deduction"></div>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>Payout info</h2>
+      <div class="grid2">
+        <div class="field"><label for="f-method">Payout method</label>
+          <select id="f-method" data-bind="payout.method"></select></div>
+        <div class="field"><label for="f-acctname">Account name</label><input id="f-acctname" data-bind="payout.accountName" autocomplete="off"></div>
+        <div class="field"><label for="f-acctno" id="acctLabel">Account number</label><input id="f-acctno" data-bind="payout.accountNumber" autocomplete="off"></div>
+        <div class="field" id="extraField"><label for="f-bank" id="extraLabel">Bank name</label><input id="f-bank" data-bind="payout.bank" autocomplete="off"></div>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>Notes</h2>
+      <div class="field"><label for="f-notes">Shown at the bottom of the invoice</label><textarea id="f-notes" data-bind="notes"></textarea></div>
+    </div>
+  </section>
+
+  <section class="stage" aria-label="Invoice preview">
+    <div class="bar-actions">
+      <div class="due-mini">Amount due<strong id="dueMini"></strong></div>
+      <div class="btns">
+        <button class="btn primary" id="save" type="button">Save to history</button>
+        <button class="btn" id="dlExcel" type="button">Download Excel</button>
+        <button class="btn" id="dlImage" type="button">Download image</button>
+      </div>
+      <div class="error" id="formError" role="alert" hidden></div>
+    </div>
+    <div class="scroller"><div class="fit" id="fit"><div id="sheetHost"></div></div></div>
+  </section>
+</main>
+
+<main id="viewHistory" class="history" hidden>
+  <div class="tiles" id="tiles"></div>
+  <div class="tools">
+    <input id="search" type="search" placeholder="Search by name, client or invoice number" aria-label="Search invoices">
+    <div class="seg" role="group" aria-label="Filter by status">
+      <button data-filter="all" aria-pressed="true">All</button>
+      <button data-filter="unpaid" aria-pressed="false">Unpaid</button>
+      <button data-filter="paid" aria-pressed="false">Paid</button>
+    </div>
+    <button class="btn" id="dlHistory" type="button">Download list as Excel</button>
+  </div>
+  <div class="tablewrap" id="historyTable"></div>
+</main>
+
+<div id="exportHost" aria-hidden="true"></div>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script>
+(() => {
+const CURRENCIES = { USD: "$", PHP: "₱", EUR: "€", GBP: "£", AUD: "A$", CAD: "C$", SGD: "S$" };
+const METHODS = {
+  "GCash": ["Mobile number", null],
+  "Maya": ["Mobile number", null],
+  "Bank transfer": ["Account number", "Bank name"],
+  "PayPal": ["PayPal email", null],
+  "Wise": ["Email or account ID", null],
+  "Payoneer": ["Email or account ID", null],
+  "USDT / Crypto": ["Wallet address", "Network"],
+  "Other": ["Account details", null],
+};
+const CLIPS = ["#2b3fd6", "#d6336c", "#e08a00", "#0f9d8a", "#7a3fd1", "#4f8a10"];
+const DRAFT_KEY = "video-invoice-draft-v1";
+const $ = (id) => document.getElementById(id);
+
+/* ---------- Dates and money ---------- */
+const pad = (n) => String(n).padStart(2, "0");
+const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function nice(s) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s || "");
+  return m ? `${MONTHS[+m[2] - 1]} ${+m[3]}, ${m[1]}` : "";
+}
+function period(inv) {
+  const a = nice(inv.periodStart), b = nice(inv.periodEnd);
+  return a && b ? `${a} to ${b}` : a || b;
+}
+const num = (v) => { const n = parseFloat(String(v ?? "").replace(/,/g, "")); return Number.isFinite(n) && n > 0 ? n : 0; };
+const toCents = (v) => Math.round(num(v) * 100);
+function money(cents, cur) {
+  const abs = (Math.abs(cents) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return (cents < 0 ? "-" : "") + (CURRENCIES[cur] || "") + abs;
+}
+function calc(inv) {
+  const lines = inv.lines.map((l) => Math.round(num(l.qty) * toCents(l.rate)));
+  const subtotal = lines.reduce((a, b) => a + b, 0);
+  const videos = inv.lines.reduce((a, l) => a + num(l.qty), 0);
+  const bonus = toCents(inv.bonus), deduction = toCents(inv.deduction);
+  return { lines, subtotal, videos, bonus, deduction, total: subtotal + bonus - deduction };
+}
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const showQty = (n) => (Math.round(n * 100) / 100).toLocaleString("en-US");
+
+/* ---------- State ---------- */
+function blank(keep = {}) {
+  const now = new Date();
+  return {
+    number: "", status: "unpaid", issued: iso(now), due: iso(addDays(now, 7)), periodStart: "", periodEnd: "",
+    currency: keep.currency || "USD",
+    from: { name: "", contact: "" },
+    to: { name: keep.toName || "Zagged", contact: keep.toContact || "" },
+    lines: [{ name: "", qty: "", rate: "" }],
+    bonus: "", deduction: "",
+    payout: { method: "GCash", accountName: "", accountNumber: "", bank: "" },
+    notes: "",
+  };
+}
+function example() {
+  const now = new Date();
+  const inv = blank();
+  inv.periodStart = iso(new Date(now.getFullYear(), now.getMonth(), 1));
+  inv.periodEnd = iso(now);
+  inv.from = { name: "Mika Reyes", contact: "mika.edits@example.com" };
+  inv.to = { name: "Zagged", contact: "" };
+  inv.lines = [
+    { name: "AI animation shorts", qty: "12", rate: "15" },
+    { name: "Long-form explainer edits", qty: "2", rate: "60" },
+    { name: "Script revision re-edits", qty: "4", rate: "5" },
+  ];
+  inv.bonus = "25"; inv.deduction = "";
+  inv.payout = { method: "GCash", accountName: "Mika Reyes", accountNumber: "0917 000 0000", bank: "" };
+  inv.notes = "Payment within 7 days of the issue date. Thank you for the work this period.";
+  return inv;
+}
+const state = { inv: example(), isExample: true, numberAuto: true, editingId: null, history: [], historyReady: false, filter: "all", confirmDelete: null, isAdmin: true, db: null, dbNote: "Loading your saved invoices." };
+
+function nextNumber() {
+  const year = new Date().getFullYear();
+  const re = new RegExp(`^INV-${year}-(\\d+)$`);
+  const max = state.history.reduce((m, h) => { const x = re.exec(h.number || ""); return x ? Math.max(m, +x[1]) : m; }, 0);
+  return `INV-${year}-${String(max + 1).padStart(4, "0")}`;
+}
+const getPath = (o, p) => p.split(".").reduce((a, k) => (a == null ? a : a[k]), o);
+function setPath(o, p, v) { const ks = p.split("."); const last = ks.pop(); ks.reduce((a, k) => a[k], o)[last] = v; }
+
+/* ---------- Invoice sheet ---------- */
+function sheetHTML(inv) {
+  const c = calc(inv);
+  const shown = inv.lines.map((l, i) => ({ ...l, i, cents: c.lines[i] })).filter((l) => l.name || num(l.qty) || num(l.rate));
+  const clips = shown.filter((l) => l.cents > 0);
+  const strip = clips.length
+    ? clips.map((l) => `<i style="flex:${l.cents} 1 0;background:${CLIPS[l.i % CLIPS.length]}"></i>`).join("")
+    : `<i class="empty"></i>`;
+  const rows = shown.length
+    ? shown.map((l) => `<tr>
+        <td class="name"><i style="background:${CLIPS[l.i % CLIPS.length]}"></i>${esc(l.name) || "Untitled"}</td>
+        <td class="n">${showQty(num(l.qty))}</td>
+        <td class="n">${money(toCents(l.rate), inv.currency)}</td>
+        <td class="n amount">${money(l.cents, inv.currency)}</td></tr>`).join("")
+    : `<tr><td class="none" colspan="4">Add a video to see it here.</td></tr>`;
+  const per = period(inv);
+  const m = METHODS[inv.payout.method] || METHODS.Other;
+  const totalText = money(c.total, inv.currency);
+  const size = totalText.length > 15 ? 20 : totalText.length > 12 ? 24 : 30;
+  const meta = [["Invoice no.", inv.number], ["Issued", nice(inv.issued)], ["Due", nice(inv.due)]].filter((r) => r[1]);
+  const pay = [["Account name", inv.payout.accountName], [m[0], inv.payout.accountNumber], m[1] ? [m[1], inv.payout.bank] : null].filter((r) => r && r[1]);
+  return `<article class="sheet">
+    ${inv.status === "paid" ? `<div class="s-stamp">Paid</div>` : ""}
+    <div class="s-head">
+      <div class="s-title">Invoice</div>
+      <div class="s-meta">${meta.map((r) => `<span>${r[0]}</span><b>${esc(r[1])}</b>`).join("")}</div>
+    </div>
+    <div class="s-strip">${strip}</div>
+    <div class="s-parties">
+      <div><h3>From</h3><div class="big">${esc(inv.from.name) || "Your name"}</div><p>${esc(inv.from.contact)}</p></div>
+      <div><h3>Bill to</h3><div class="big">${esc(inv.to.name) || "Client name"}</div><p>${esc(inv.to.contact)}</p></div>
+      <div>${per ? `<h3>Work period</h3><div class="big" style="font-size:14px">${per}</div>` : ""}<p style="margin-top:${per ? 3 : 0}px">${showQty(c.videos)} ${c.videos === 1 ? "video" : "videos"}</p></div>
+    </div>
+    <table class="s-table">
+      <thead><tr><th class="first">Video or project</th><th class="n">Videos</th><th class="n">Rate per video</th><th class="n">Amount</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="s-bottom">
+      <div class="s-pay"><h3>Payout info</h3><div class="method">${esc(inv.payout.method)}</div>
+        ${pay.length ? `<dl>${pay.map((r) => `<dt>${esc(r[0])}</dt><dd>${esc(r[1])}</dd>`).join("")}</dl>` : ""}</div>
+      <div class="s-sum">
+        <div class="row"><span>Subtotal</span><b>${money(c.subtotal, inv.currency)}</b></div>
+        ${c.bonus ? `<div class="row"><span>Bonus</span><b>+${money(c.bonus, inv.currency)}</b></div>` : ""}
+        ${c.deduction ? `<div class="row"><span>Deductions</span><b>-${money(c.deduction, inv.currency)}</b></div>` : ""}
+        <div class="s-due"><small>Amount due</small><strong style="font-size:${size}px">${totalText}</strong></div>
+      </div>
+    </div>
+    ${inv.notes ? `<div class="s-notes"><h3>Notes</h3><p>${esc(inv.notes)}</p></div>` : ""}
+  </article>`;
+}
+function fitSheet() {
+  const host = $("sheetHost"), fit = $("fit");
+  const s = Math.min(1, fit.clientWidth / 794) || 1;
+  host.style.transform = `scale(${s})`;
+  fit.style.height = Math.ceil(host.offsetHeight * s) + "px";
+}
+
+/* ---------- Form ---------- */
+function fillForm() {
+  document.querySelectorAll("[data-bind]").forEach((el) => { el.value = getPath(state.inv, el.dataset.bind) ?? ""; });
+  renderLines(); applyMethod(); refreshNotices(); paint();
+}
+function renderLines() {
+  const { inv } = state;
+  const c = calc(inv);
+  $("lines").innerHTML = inv.lines.map((l, i) => `<div class="line">
+    <div class="bar" style="background:${CLIPS[i % CLIPS.length]}"></div>
+    <div class="inner">
+      <div class="field"><label for="l-name-${i}">Video or project name</label><input id="l-name-${i}" data-i="${i}" data-k="name" value="${esc(l.name)}" autocomplete="off"></div>
+      <div class="nums">
+        <div class="field"><label for="l-qty-${i}">Videos</label><input id="l-qty-${i}" type="number" min="0" step="1" inputmode="numeric" data-i="${i}" data-k="qty" value="${esc(l.qty)}"></div>
+        <div class="field"><label for="l-rate-${i}">Rate per video</label><input id="l-rate-${i}" type="number" min="0" step="any" inputmode="decimal" data-i="${i}" data-k="rate" value="${esc(l.rate)}"></div>
+        <div class="amt" id="l-amt-${i}">${money(c.lines[i], inv.currency)}</div>
+        <button class="icon" type="button" data-remove="${i}" aria-label="Remove this line" title="Remove this line">×</button>
+      </div>
+    </div></div>`).join("");
+}
+function applyMethod() {
+  const m = METHODS[state.inv.payout.method] || METHODS.Other;
+  $("acctLabel").textContent = m[0];
+  $("extraField").hidden = !m[1];
+  if (m[1]) $("extraLabel").textContent = m[1];
+}
+function refreshNotices() {
+  $("exampleNotice").hidden = !state.isExample || !!state.editingId;
+  $("editNotice").hidden = !state.editingId;
+  if (state.editingId) $("editText").textContent = `Editing ${state.inv.number}`;
+  $("save").textContent = state.editingId ? "Update invoice" : "Save to history";
+  $("save").hidden = !state.isAdmin;
+}
+function paint() {
+  const c = calc(state.inv);
+  $("sheetHost").innerHTML = sheetHTML(state.inv);
+  $("dueMini").textContent = money(c.total, state.inv.currency);
+  fitSheet();
+}
+let draftTimer;
+function touched() {
+  if (state.isExample) { state.isExample = false; refreshNotices(); }
+  $("formError").hidden = true;
+  paint();
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(saveDraft, 400);
+}
+function saveDraft() {
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ inv: state.inv, numberAuto: state.numberAuto, editingId: state.editingId })); } catch (e) {}
+}
+function setNew(inv) {
+  state.inv = inv; state.editingId = null; state.numberAuto = true; inv.number = nextNumber();
+  fillForm(); saveDraft();
+}
+
+function validate(inv) {
+  const c = calc(inv);
+  if (!inv.number.trim()) return ["Enter an invoice number.", "f-number"];
+  if (!inv.from.name.trim()) return ["Enter the name for this invoice.", "f-name"];
+  if (!c.lines.some((x) => x > 0)) return ["Add at least one video with a count and a rate.", "l-qty-0"];
+  if (c.total < 0) return ["Deductions are larger than the amount earned. Lower the deductions.", "f-deduction"];
+  return null;
+}
+function fail(msg, focusId) {
+  $("formError").textContent = msg; $("formError").hidden = false;
+  if (focusId && $(focusId)) $(focusId).focus();
+}
+let toastTimer;
+function toast(msg) {
+  $("toast").textContent = msg; $("toast").hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { $("toast").hidden = true; }, 3800);
+}
+
+/* ---------- Saving ---------- */
+function toRecord(inv) {
+  const c = calc(inv);
+  const clean = JSON.parse(JSON.stringify(inv));
+  delete clean.id;
+  return { ...clean, videos: c.videos, subtotalCents: c.subtotal, totalCents: c.total, updatedAt: new Date().toISOString() };
+}
+async function saveInvoice() {
+  const { inv, db } = state;
+  const bad = validate(inv);
+  if (bad) return fail(...bad);
+  if (!db) return fail("History isn't available here. Sign in to Claude and open this page to save invoices. You can still download this invoice.");
+  inv.number = inv.number.trim();
+  if (state.history.some((h) => h.number === inv.number && h.id !== state.editingId)) {
+    return fail(`${inv.number} is already in your history. Use a different invoice number.`, "f-number");
+  }
+  const btn = $("save"); btn.disabled = true;
+  // The history listener fires as soon as this write lands, so lock the number first.
+  const hadAuto = state.numberAuto;
+  state.numberAuto = false;
+  try {
+    const rec = toRecord(inv);
+    const existing = state.editingId ? state.history.find((h) => h.id === state.editingId) : null;
+    rec.createdAt = existing?.createdAt || rec.updatedAt;
+    const ref = state.editingId ? db.collection("invoices").doc(state.editingId) : db.collection("invoices").doc();
+    await ref.set(rec);
+    const wasEditing = !!state.editingId;
+    state.editingId = ref.id;
+    refreshNotices(); saveDraft();
+    toast(wasEditing ? `Updated ${inv.number}` : `Saved ${inv.number} to history`);
+  } catch (e) {
+    state.numberAuto = hadAuto;
+    if (e && e.code === "invalid_argument") { state.isAdmin = false; refreshNotices(); fail("Only the admin can save invoices. You can still download this one."); }
+    else if (e && e.code === "quota_exceeded") fail("History is full. Delete old invoices, then save again.");
+    else fail("The invoice didn't save. Check your connection and try again.");
+  } finally { btn.disabled = false; }
+}
+
+/* ---------- Downloads ---------- */
+const slug = (s) => String(s || "").trim().replace(/[^\w-]+/g, "-").replace(/^-+|-+$/g, "");
+const fileBase = (inv) => [slug(inv.number) || "invoice", slug(inv.from.name)].filter(Boolean).join("_");
+async function deliver(filename, blob) {
+  const downloads = window.claude ? await window.claude.use("downloads") : null;
+  if (!downloads) return toast("Downloads aren't available in this view. Open the page on claude.ai.");
+  try { await downloads.save({ filename, data: blob }); toast(`Downloaded ${filename}`); }
+  catch (e) {
+    if (e && e.code === "declined") return;
+    if (e && e.code === "rate_limited") return toast("Finish the open download prompt first.");
+    toast("The download didn't start. Try again.");
+  }
+}
+async function withBusy(btn, label, fn) {
+  const old = btn.textContent; btn.disabled = true; btn.textContent = label;
+  try { await fn(); } finally { btn.disabled = false; btn.textContent = old; }
+}
+async function exportImage(inv) {
+  if (!window.html2canvas) return toast("The image tool hasn't loaded yet. Try again in a moment.");
+  const host = $("exportHost");
+  host.innerHTML = sheetHTML(inv);
+  try {
+    await Promise.all(["400 30px 'Krona One'", "400 14px 'IBM Plex Sans'", "500 14px 'IBM Plex Sans'", "600 14px 'IBM Plex Sans'"].map((f) => document.fonts.load(f, "Invoice ₱$€£0123456789")));
+    await document.fonts.ready;
+    const el = host.firstElementChild;
+    const canvas = await html2canvas(el, { scale: 3, backgroundColor: "#ffffff", logging: false, windowWidth: 1200, scrollX: 0, scrollY: 0, x: 0, y: 0, width: 794, height: el.offsetHeight });
+    const blob = await new Promise((res) => canvas.toBlob(res, "image/png"));
+    if (!blob) throw new Error("no image");
+    await deliver(`${fileBase(inv)}.png`, blob);
+  } catch (e) { toast("The image didn't generate. Try again."); console.error(e); }
+  finally { host.innerHTML = ""; }
+}
+
+const XL = { ink: "FF141B34", blue: "FF2B3FD6", mute: "FF5D6684", rule: "FFD8DDE9", white: "FFFFFFFF", paid: "FF0B7A5B" };
+const moneyFmt = (cur) => `"${CURRENCIES[cur] || ""}"#,##0.00`;
+const fontX = (o = {}) => ({ name: "Arial", size: 11, color: { argb: XL.ink }, ...o });
+const fillX = (argb) => ({ type: "pattern", pattern: "solid", fgColor: { argb } });
+
+async function buildInvoiceBook(inv) {
+  const c = calc(inv);
+  const fmt = moneyFmt(inv.currency);
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "Video Invoice Desk";
+  const ws = wb.addWorksheet("Invoice", {
+    views: [{ showGridLines: false }],
+    pageSetup: { paperSize: 9, orientation: "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 1, horizontalCentered: true, margins: { left: 0.5, right: 0.5, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } },
+  });
+  ws.columns = [{ width: 4 }, { width: 46 }, { width: 11 }, { width: 18 }, { width: 25 }];
+  const put = (range, value, style = {}) => {
+    if (range.includes(":")) ws.mergeCells(range);
+    const cell = ws.getCell(range.split(":")[0]);
+    cell.value = value;
+    cell.font = fontX(style.font);
+    cell.alignment = { vertical: "middle", ...style.alignment };
+    if (style.fill) cell.fill = fillX(style.fill);
+    if (style.numFmt) cell.numFmt = style.numFmt;
+    return cell;
+  };
+  const label = { font: { size: 9.5, color: { argb: XL.mute } } };
+
+  // Header band
+  put("A1:C2", "  Invoice", { font: { size: 26, bold: true, color: { argb: XL.white } }, fill: XL.blue });
+  put("D1:E1", inv.number + "  ", { font: { size: 12, bold: true, color: { argb: XL.white } }, fill: XL.blue, alignment: { horizontal: "right" } });
+  put("D2:E2", (inv.status === "paid" ? "Paid" : "Unpaid") + "  ", { font: { size: 10.5, color: { argb: XL.white } }, fill: XL.blue, alignment: { horizontal: "right" } });
+  ws.getRow(1).height = 26; ws.getRow(2).height = 26; ws.getRow(3).height = 10;
+
+  // Parties
+  put("A4:B4", "From", label); put("C4:E4", "Bill to", label);
+  put("A5:B5", inv.from.name, { font: { size: 13, bold: true } });
+  put("C5:E5", inv.to.name, { font: { size: 13, bold: true } });
+  put("A6:B6", inv.from.contact, { font: { color: { argb: XL.mute } } });
+  put("C6:E6", inv.to.contact, { font: { color: { argb: XL.mute } } });
+  ws.getRow(7).height = 8;
+
+  // Dates
+  put("A8:B8", "Issued", label); put("C8:D8", "Due", label); if (period(inv)) put("E8", "Work period", label);
+  put("A9:B9", nice(inv.issued)); put("C9:D9", nice(inv.due)); put("E9", period(inv), { alignment: { wrapText: true } });
+  if (period(inv).length > 24) ws.getRow(9).height = 30;
+  ws.getRow(10).height = 12;
+
+  // Table header
+  const heads = ["", "Video or project", "Videos", "Rate per video", "Amount"];
+  heads.forEach((t, i) => {
+    const cell = ws.getRow(11).getCell(i + 1);
+    cell.value = t; cell.font = fontX({ bold: true, color: { argb: XL.white }, size: 10.5 }); cell.fill = fillX(XL.ink);
+    cell.alignment = { vertical: "middle", horizontal: i >= 2 ? "right" : "left", indent: i === 4 ? 1 : 0 };
+  });
+  ws.getRow(11).height = 24;
+
+  // Lines. Amounts are live formulas.
+  const lines = inv.lines.map((l, i) => ({ ...l, i, cents: c.lines[i] })).filter((l) => l.name || num(l.qty) || num(l.rate));
+  const first = 12;
+  const bottom = { bottom: { style: "thin", color: { argb: XL.rule } } };
+  lines.forEach((l, n) => {
+    const r = first + n, row = ws.getRow(r);
+    row.getCell(1).fill = fillX("FF" + CLIPS[l.i % CLIPS.length].slice(1).toUpperCase());
+    row.getCell(2).value = l.name || "Untitled";
+    row.getCell(2).font = fontX(); row.getCell(2).alignment = { vertical: "middle", wrapText: true, indent: 1 };
+    row.getCell(3).value = num(l.qty); row.getCell(3).numFmt = Number.isInteger(num(l.qty)) ? "#,##0" : "#,##0.00"; row.getCell(3).font = fontX(); row.getCell(3).alignment = { vertical: "middle", horizontal: "right" };
+    row.getCell(4).value = toCents(l.rate) / 100; row.getCell(4).font = fontX(); row.getCell(4).numFmt = fmt; row.getCell(4).alignment = { vertical: "middle", horizontal: "right" };
+    row.getCell(5).value = { formula: `ROUND(C${r}*D${r},2)`, result: l.cents / 100 };
+    row.getCell(5).font = fontX({ bold: true }); row.getCell(5).numFmt = fmt; row.getCell(5).alignment = { vertical: "middle", horizontal: "right", indent: 1 };
+    [2, 3, 4, 5].forEach((k) => { row.getCell(k).border = bottom; });
+    row.height = Math.max(24, 16 * Math.ceil((l.name || "").length / 44) + 8);
+  });
+  const last = first + Math.max(lines.length, 1) - 1;
+
+  // Totals on the right, payout on the left, starting on the same row
+  let r = last + 2;
+  const top = r;
+  const sum = (lab, value, numFmt, bold) => {
+    put(`D${r}`, lab, { font: { color: { argb: XL.mute } }, alignment: { horizontal: "right" } });
+    const cell = put(`E${r}`, value, { font: { bold: !!bold }, numFmt, alignment: { horizontal: "right", indent: 1 } });
+    r++; return cell;
+  };
+  sum("Total videos", { formula: `SUM(C${first}:C${last})`, result: c.videos }, "#,##0");
+  const subRow = r;
+  sum("Subtotal", { formula: `SUM(E${first}:E${last})`, result: c.subtotal / 100 }, fmt, true);
+  let formula = `E${subRow}`;
+  if (c.bonus) { formula += `+E${r}`; sum("Bonus", c.bonus / 100, `"+"${fmt}`); }
+  if (c.deduction) { formula += `-E${r}`; sum("Deductions", c.deduction / 100, `"-"${fmt}`); }
+  ws.getRow(r).height = 34;
+  put(`D${r}`, "Amount due", { font: { bold: true, color: { argb: XL.white } }, fill: XL.blue, alignment: { horizontal: "left", indent: 1 } });
+  put(`E${r}`, { formula, result: c.total / 100 }, { font: { size: 15, bold: true, color: { argb: XL.white } }, fill: XL.blue, numFmt: fmt, alignment: { horizontal: "right", indent: 1 } });
+  const totalsEnd = r;
+
+  const m = METHODS[inv.payout.method] || METHODS.Other;
+  let p = top;
+  const pay = (text, style) => { put(`A${p}:B${p}`, text, style); p++; };
+  pay("Payout info", label);
+  pay(inv.payout.method, { font: { bold: true, size: 12 } });
+  if (inv.payout.accountName) pay(`Account name: ${inv.payout.accountName}`);
+  if (inv.payout.accountNumber) pay(`${m[0]}: ${inv.payout.accountNumber}`);
+  if (m[1] && inv.payout.bank) pay(`${m[1]}: ${inv.payout.bank}`);
+
+  let end = Math.max(totalsEnd, p - 1);
+  if (inv.notes) {
+    end += 2;
+    put(`A${end}:E${end}`, "Notes", label);
+    end += 1;
+    put(`A${end}:E${end}`, inv.notes, { alignment: { wrapText: true, vertical: "top" } });
+    const rows = inv.notes.split("\n").reduce((a, s) => a + Math.max(1, Math.ceil(s.length / 92)), 0);
+    ws.getRow(end).height = 16 * rows + 4;
+  }
+  ws.pageSetup.printArea = `A1:E${end}`;
+  return wb.xlsx.writeBuffer();
+}
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+async function exportExcel(inv) {
+  if (!window.ExcelJS) return toast("The Excel tool hasn't loaded yet. Try again in a moment.");
+  try {
+    const buf = await buildInvoiceBook(inv);
+    await deliver(`${fileBase(inv)}.xlsx`, new Blob([buf], { type: XLSX_MIME }));
+  } catch (e) { toast("The Excel file didn't generate. Try again."); console.error(e); }
+}
+async function exportHistory(list) {
+  if (!window.ExcelJS) return toast("The Excel tool hasn't loaded yet. Try again in a moment.");
+  if (!list.length) return toast("There are no invoices to download.");
+  try {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Invoice history", { views: [{ state: "frozen", ySplit: 1, showGridLines: false }] });
+    ws.columns = [
+      ["Invoice no.", 17], ["Name", 24], ["Bill to", 22], ["Issued", 14], ["Due", 14], ["Videos", 9], ["Subtotal", 15], ["Bonus", 13],
+      ["Deductions", 13], ["Total", 16], ["Currency", 10], ["Status", 10], ["Payout method", 16], ["Account name", 22], ["Account number", 22],
+    ].map(([header, width]) => ({ header, width }));
+    const head = ws.getRow(1); head.height = 26;
+    head.eachCell((c) => { c.font = fontX({ bold: true, color: { argb: XL.white } }); c.fill = fillX(XL.blue); c.alignment = { vertical: "middle" }; });
+    list.forEach((h, i) => {
+      const c = calc(h), fmt = moneyFmt(h.currency), rn = i + 2;
+      const row = ws.addRow([h.number, h.from?.name, h.to?.name, nice(h.issued), nice(h.due), c.videos, c.subtotal / 100, c.bonus / 100, c.deduction / 100,
+        { formula: `G${rn}+H${rn}-I${rn}`, result: c.total / 100 }, h.currency, h.status === "paid" ? "Paid" : "Unpaid", h.payout?.method, h.payout?.accountName, h.payout?.accountNumber]);
+      row.eachCell({ includeEmpty: true }, (cell, k) => {
+        cell.font = fontX({ bold: k === 10 });
+        cell.border = { bottom: { style: "thin", color: { argb: XL.rule } } };
+        if (k >= 7 && k <= 10) cell.numFmt = fmt;
+        if (k === 12) cell.font = fontX({ bold: true, color: { argb: h.status === "paid" ? XL.paid : "FF9A5B00" } });
+      });
+    });
+    ws.autoFilter = { from: "A1", to: { row: list.length + 1, column: 15 } };
+    const buf = await wb.xlsx.writeBuffer();
+    await deliver(`Invoice-history_${iso(new Date())}.xlsx`, new Blob([buf], { type: XLSX_MIME }));
+  } catch (e) { toast("The Excel file didn't generate. Try again."); console.error(e); }
+}
+
+/* ---------- History ---------- */
+function visible() {
+  const q = $("search").value.trim().toLowerCase();
+  return state.history.filter((h) => {
+    if (state.filter !== "all" && (h.status || "unpaid") !== state.filter) return false;
+    if (!q) return true;
+    return [h.number, h.from?.name, h.to?.name].some((v) => String(v || "").toLowerCase().includes(q));
+  });
+}
+function byCurrency(list) {
+  const map = {};
+  list.forEach((h) => { const c = calc(h); map[h.currency] = (map[h.currency] || 0) + c.total; });
+  const parts = Object.entries(map).map(([cur, cents]) => money(cents, cur));
+  return parts.length ? parts.join(" + ") : money(0, "USD");
+}
+function renderHistory() {
+  $("historyCount").textContent = state.history.length ? `(${state.history.length})` : "";
+  const all = state.history;
+  const videos = all.reduce((a, h) => a + calc(h).videos, 0);
+  $("tiles").innerHTML = [
+    ["Invoices saved", all.length.toLocaleString("en-US")],
+    ["Videos billed", showQty(videos)],
+    ["Unpaid", byCurrency(all.filter((h) => h.status !== "paid"))],
+    ["Paid", byCurrency(all.filter((h) => h.status === "paid"))],
+  ].map(([k, v]) => `<div class="tile"><span>${k}</span><strong>${esc(v)}</strong></div>`).join("");
+
+  const names = [...new Set(all.map((h) => h.from?.name).filter(Boolean))];
+  const clients = [...new Set(all.map((h) => h.to?.name).filter(Boolean))];
+  $("pastNames").innerHTML = names.map((n) => `<option value="${esc(n)}"></option>`).join("");
+  $("pastClients").innerHTML = clients.map((n) => `<option value="${esc(n)}"></option>`).join("");
+
+  const box = $("historyTable");
+  if (!state.historyReady) { box.innerHTML = `<div class="empty-state">${esc(state.dbNote)}</div>`; return; }
+  if (!all.length) { box.innerHTML = `<div class="empty-state">No saved invoices yet. Fill in an invoice and choose Save to history.<br><button class="btn" data-go="new">Create an invoice</button></div>`; return; }
+  const list = visible();
+  if (!list.length) { box.innerHTML = `<div class="empty-state">No invoices match this search.</div>`; return; }
+  box.innerHTML = `<table class="h-table"><thead><tr><th>Invoice</th><th>Name</th><th>Bill to</th><th>Issued</th><th class="r">Videos</th><th class="r">Total</th><th>Status</th><th><span hidden>Actions</span></th></tr></thead><tbody>${
+    list.map((h) => {
+      const c = calc(h), paid = h.status === "paid";
+      const acts = state.confirmDelete === h.id
+        ? `<span class="mini">Delete this invoice?</span><button class="link danger" data-act="del-yes" data-id="${esc(h.id)}">Delete</button><button class="link" data-act="del-no">Keep</button>`
+        : `<button class="link" data-act="open" data-id="${esc(h.id)}">Open</button><button class="link" data-act="xlsx" data-id="${esc(h.id)}">Excel</button><button class="link" data-act="png" data-id="${esc(h.id)}">Image</button><button class="link danger" data-act="del" data-id="${esc(h.id)}">Delete</button>`;
+      return `<tr><td class="no">${esc(h.number)}</td><td>${esc(h.from?.name)}</td><td>${esc(h.to?.name)}</td><td>${esc(nice(h.issued))}</td><td class="r">${showQty(c.videos)}</td><td class="r"><b>${money(c.total, h.currency)}</b></td>
+        <td><button class="pill ${paid ? "paid" : "unpaid"}" data-act="toggle" data-id="${esc(h.id)}" title="Mark as ${paid ? "unpaid" : "paid"}">${paid ? "Paid" : "Unpaid"}</button></td>
+        <td><div class="acts">${acts}</div></td></tr>`;
+    }).join("")
+  }</tbody></table>`;
+}
+function normalize(h) {
+  return {
+    status: "unpaid", currency: "USD", number: "", notes: "", bonus: "", deduction: "", issued: "", due: "", periodStart: "", periodEnd: "",
+    ...h,
+    from: { name: "", contact: "", ...(h.from || {}) },
+    to: { name: "", contact: "", ...(h.to || {}) },
+    payout: { method: "Other", accountName: "", accountNumber: "", bank: "", ...(h.payout || {}) },
+    lines: Array.isArray(h.lines) && h.lines.length ? h.lines : [{ name: "", qty: "", rate: "" }],
+  };
+}
+async function onHistoryClick(e) {
+  const go = e.target.closest("[data-go]");
+  if (go) return route("new");
+  const b = e.target.closest("[data-act]");
+  if (!b) return;
+  const h = state.history.find((x) => x.id === b.dataset.id);
+  const act = b.dataset.act;
+  if (act === "open" && h) {
+    state.inv = JSON.parse(JSON.stringify(h)); delete state.inv.id;
+    state.editingId = h.id; state.numberAuto = false; state.isExample = false;
+    fillForm(); route("new"); window.scrollTo(0, 0);
+  } else if (act === "xlsx" && h) { await withBusy(b, "Preparing", () => exportExcel(h)); }
+  else if (act === "png" && h) { await withBusy(b, "Preparing", () => exportImage(h)); }
+  else if (act === "toggle" && h) {
+    const status = h.status === "paid" ? "unpaid" : "paid";
+    try { await state.db.collection("invoices").doc(h.id).update({ status, updatedAt: new Date().toISOString() }); toast(`${h.number} marked ${status}`); if (state.editingId === h.id) { state.inv.status = status; fillForm(); } }
+    catch (err) { toast("The status didn't change. Try again."); }
+  } else if (act === "del") { state.confirmDelete = b.dataset.id; renderHistory(); }
+  else if (act === "del-no") { state.confirmDelete = null; renderHistory(); }
+  else if (act === "del-yes" && h) {
+    try {
+      await state.db.collection("invoices").doc(h.id).delete();
+      state.confirmDelete = null;
+      if (state.editingId === h.id) setNew(blank());
+      toast(`Deleted ${h.number}`);
+    } catch (err) { toast("The invoice wasn't deleted. Try again."); }
+  }
+}
+
+/* ---------- Routing ---------- */
+function route(name, fromHash) {
+  const hist = name === "history" && state.isAdmin;
+  $("viewNew").hidden = hist; $("viewHistory").hidden = !hist;
+  $("tabNew").setAttribute("aria-selected", String(!hist)); $("tabHistory").setAttribute("aria-selected", String(hist));
+  if (!fromHash) { try { location.hash = hist ? "history" : "new"; } catch (e) {} }
+  if (hist) renderHistory(); else fitSheet();
+}
+
+/* ---------- Events ---------- */
+function wire() {
+  document.querySelectorAll("[data-bind]").forEach((el) => {
+    el.addEventListener("input", () => {
+      setPath(state.inv, el.dataset.bind, el.value);
+      if (el.dataset.bind === "number") state.numberAuto = false;
+      if (el.dataset.bind === "payout.method") applyMethod();
+      if (el.dataset.bind === "currency") renderLinesAmounts();
+      touched();
+    });
+  });
+  $("lines").addEventListener("input", (e) => {
+    const t = e.target; if (t.dataset.i === undefined) return;
+    state.inv.lines[+t.dataset.i][t.dataset.k] = t.value;
+    renderLinesAmounts(); touched();
+  });
+  $("lines").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-remove]"); if (!b) return;
+    const i = +b.dataset.remove;
+    if (state.inv.lines.length === 1) state.inv.lines = [{ name: "", qty: "", rate: "" }];
+    else state.inv.lines.splice(i, 1);
+    renderLines(); touched();
+  });
+  $("addLine").addEventListener("click", () => {
+    state.inv.lines.push({ name: "", qty: "", rate: "" });
+    renderLines(); touched();
+    $(`l-name-${state.inv.lines.length - 1}`).focus();
+  });
+  $("clearExample").addEventListener("click", () => { state.isExample = false; setNew(blank()); $("f-name").focus(); });
+  $("stopEdit").addEventListener("click", () => {
+    const k = { currency: state.inv.currency, toName: state.inv.to.name, toContact: state.inv.to.contact };
+    setNew(blank(k)); $("f-name").focus();
+  });
+  $("f-name").addEventListener("change", () => {
+    const match = state.history.find((h) => h.from?.name === state.inv.from.name);
+    // Only fill a blank payout section so typed details are never replaced.
+    const p = state.inv.payout;
+    if (!match || p.accountName || p.accountNumber || p.bank) return;
+    state.inv.from.contact = match.from.contact || "";
+    state.inv.payout = { ...match.payout };
+    document.querySelectorAll('[data-bind^="payout."],[data-bind="from.contact"]').forEach((el) => { el.value = getPath(state.inv, el.dataset.bind) ?? ""; });
+    applyMethod(); touched();
+    toast(`Filled payout info from ${match.number}`);
+  });
+  $("save").addEventListener("click", saveInvoice);
+  const guarded = (btn, fn) => btn.addEventListener("click", () => {
+    const bad = validate(state.inv);
+    if (bad) return fail(...bad);
+    withBusy(btn, "Preparing", () => fn(state.inv));
+  });
+  guarded($("dlExcel"), exportExcel);
+  guarded($("dlImage"), exportImage);
+  $("tabNew").addEventListener("click", () => route("new"));
+  $("tabHistory").addEventListener("click", () => route("history"));
+  $("historyTable").addEventListener("click", onHistoryClick);
+  $("search").addEventListener("input", renderHistory);
+  document.querySelectorAll("[data-filter]").forEach((b) => b.addEventListener("click", () => {
+    state.filter = b.dataset.filter;
+    document.querySelectorAll("[data-filter]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    renderHistory();
+  }));
+  $("dlHistory").addEventListener("click", (e) => withBusy(e.target, "Preparing", () => exportHistory(visible())));
+  window.addEventListener("hashchange", () => route(location.hash === "#history" ? "history" : "new", true));
+  if (window.ResizeObserver) new ResizeObserver(fitSheet).observe($("fit"));
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitSheet);
+}
+function renderLinesAmounts() {
+  const c = calc(state.inv);
+  c.lines.forEach((v, i) => { const el = $(`l-amt-${i}`); if (el) el.textContent = money(v, state.inv.currency); });
+}
+
+/* ---------- Connecting to saved history ---------- */
+function setHistoryDown(note) { state.dbNote = note; state.historyReady = false; renderHistory(); }
+async function connect() {
+  const user = window.claude ? await window.claude.use("user") : null;
+  if (user) {
+    const can = await user.canEdit();
+    if (can === false && !(await user.isOwner())) {
+      state.isAdmin = false;
+      $("tabHistory").hidden = true;
+      refreshNotices();
+      if (location.hash === "#history") route("new");
+      return;
+    }
+  }
+  const db = window.claude ? await window.claude.use("db") : null;
+  if (!db) { setHistoryDown("Sign in to Claude and open this page to see saved invoices."); return; }
+  state.db = db;
+  let timer = setTimeout(() => setHistoryDown("Saved invoices can't be reached yet. Check your connection."), 10000);
+  db.collection("invoices").orderBy("createdAt", "desc").onSnapshot((snap) => {
+    if (!snap.metadata.fromCache) { clearTimeout(timer); timer = null; }
+    state.history = snap.docs.map((d) => normalize({ ...d.data(), id: d.id }));
+    state.historyReady = true;
+    if (state.numberAuto && !state.editingId) {
+      const n = nextNumber();
+      if (n !== state.inv.number) { state.inv.number = n; $("f-number").value = n; paint(); }
+    }
+    renderHistory();
+  }, () => { clearTimeout(timer); setHistoryDown("Saved invoices can't be reached right now. Reload the page to try again."); });
+}
+
+/* ---------- Boot ---------- */
+function start(saved) {
+  const data = saved && saved.inv ? saved : (() => { try { return JSON.parse(localStorage.getItem(DRAFT_KEY)) || {}; } catch (e) { return {}; } })();
+  // Drafts started before Zagged and USD became the defaults.
+  if (data.inv && !data.editingId && data.inv.to?.name === "KRAFTICS") { data.inv.to.name = "Zagged"; data.inv.currency = "USD"; }
+  if (data.inv) { state.inv = data.inv; state.isExample = false; state.numberAuto = data.numberAuto !== false; state.editingId = data.editingId || null; }
+  if (!state.inv.number || state.numberAuto) state.inv.number = nextNumber();
+  $("f-currency").innerHTML = Object.keys(CURRENCIES).map((c) => `<option value="${c}">${c} (${CURRENCIES[c]})</option>`).join("");
+  $("f-method").innerHTML = Object.keys(METHODS).map((m) => `<option>${m}</option>`).join("");
+  wire(); fillForm(); renderHistory();
+  route(location.hash === "#history" ? "history" : "new", true);
+  connect();
+  window.claude?.hot?.snapshot?.(() => ({ inv: state.inv, numberAuto: state.numberAuto, editingId: state.editingId }));
+}
+window.__invoice = { calc, money, state };
+if (window.claude?.hot?.ready) window.claude.hot.ready(start); else start(window.claude?.hot?.data ?? {});
+})();
+</script>
+</body>
+</html>
